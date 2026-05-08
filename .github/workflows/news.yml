@@ -1,9 +1,9 @@
-name: Behnews Bot Professional
+name: Behnews Bot Fast Iran
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/10 * * * *' # هر 10 دقیقه چک میکنه که خبر داغ از دست نره
 
 jobs:
   run:
@@ -15,36 +15,36 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send news with Photo
+      - name: Send Fast News
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PYEOF'
-          import requests, os, re
+          import requests, os, re, random
 
           TOKEN = os.environ["BALE_TOKEN"]
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
+          # منابع متمرکز روی اخبار داغ و فوری ایران
           SOURCES = [
-              ("تسنیم", "https://www.tasnimnews.com/fa/rss/feed"),
-              ("ایسنا", "https://www.isna.ir/rss"),
-              ("فارس", "https://www.farsnews.ir/rss"),
-              ("خبرآنلاین", "https://www.khabaronline.ir/rss"),
+              "https://www.tasnimnews.com/fa/rss/feed/0/7/1", # سیاسی ایران
+              "https://www.isna.ir/rss/tp/1",                 # اخبار اصلی ایران
+              "https://www.irna.ir/rss/tp/1",                 # فوری ایرنا
+              "https://www.farsnews.ir/rss/politics"          # سیاسی فارس
           ]
 
           all_news = []
-          for name, url in SOURCES:
+          for url in SOURCES:
               try:
-                  resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                  # استخراج آیتم‌های خبر
+                  resp = requests.get(url, timeout=10)
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
-                  for item in items[:5]:
+                  for item in items:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
-                      # تلاش برای پیدا کردن لینک عکس در تگ‌های مختلف
-                      img_match = re.search(r'<enclosure.*?url="(.*?)"', item) or re.search(r'<media:content.*?url="(.*?)"', item) or re.search(r'src="(.*?)"', item)
+                      # فیلتر دقیق‌تر برای پیدا کردن عکس خبر نه لوگوی سایت
+                      img_match = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
                       img_url = img_match.group(1) if img_match else None
                       
                       if len(title) > 30:
@@ -53,9 +53,8 @@ jobs:
 
           if not all_news: exit()
 
-          # انتخاب یک خبر تصادفی از لیست برای تنوع
-          import random
-          selected = random.choice(all_news[:10])
+          # انتخاب یکی از ۳ خبر جدید اول (برای اینکه همیشه داغ‌ترین باشه)
+          selected = all_news[0] if all_news else None
           
           try:
               groq = requests.post(
@@ -67,15 +66,16 @@ jobs:
                           {
                               "role": "system", 
                               "content": (
-                                  "تو ادمین یک کانال خبری هستی. "
-                                  "فرمت خروجی دقیقا این باشد:\n"
-                                  "📍 [تیتر کوتاه خبر]\n\n"
-                                  "💬 [اصل خبر به زبان محاوره]\n\n"
-                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و رندانه]\n\n"
-                                  "قوانین: فقط فارسی، صمیمی، بدون کلمه انگلیسی."
+                                  "تو ادمین یک کانال خبری فوری و رند ایرانی هستی. "
+                                  "فقط درباره اخبار ایران بنویس. "
+                                  "فرمت: "
+                                  "📍 [تیتر خیلی کوتاه و جنجالی خبر]\n\n"
+                                  "💬 [اصل خبر به زبان محاوره خیلی صمیمی]\n\n"
+                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و رندانه به سبک لاتی تهرانی]\n\n"
+                                  "قوانین: فقط فارسی. کلمه انگلیسی ممنوع. حتما به نفع ایران و علیه رقبا تیکه بنداز."
                               )
                           },
-                          {"role": "user", "content": f"این خبر را با فرمت گفته شده بساز: {selected['title']}"}
+                          {"role": "user", "content": f"این خبر داغ ایران رو بترکون: {selected['title']}"}
                       ]
                   }, timeout=30
               ).json()
@@ -84,16 +84,9 @@ jobs:
 
           caption = f"{msg}\n\n🆔 @behnews"
 
-          # اگر عکس داشت، با عکس بفرست، وگرنه فقط متن
-          if selected['image']:
-              r = requests.post(
-                  f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto",
-                  json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption}
-              )
+          # ارسال با متد مناسب
+          if selected['image'] and "static" not in selected['image']: # جلوگیری از ارسال لوگوهای استاتیک
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption})
           else:
-              r = requests.post(
-                  f"https://tapi.bale.ai/bot{TOKEN}/sendMessage",
-                  json={"chat_id": int(CHAT), "text": caption}
-              )
-          print(r.json())
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": caption})
           PYEOF
