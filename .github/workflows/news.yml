@@ -3,13 +3,13 @@ name: Behnews Bot Professional Fast
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *' # اجرای هر 5 دقیقه برای سرعت لحظه‌ای
+    - cron: '*/5 * * * *' 
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3 # برای مدیریت فایل تاریخچه الزامی است
+      - uses: actions/checkout@v3
 
       - uses: actions/setup-python@v5
         with:
@@ -24,14 +24,13 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PYEOF'
-          import requests, os, re
+          import requests, os, re, time
 
           TOKEN = os.environ["BALE_TOKEN"]
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
           HISTORY_FILE = "sent_news.txt"
 
-          # ایجاد یا خواندن فایل تاریخچه خبرهای ارسالی
           if not os.path.exists(HISTORY_FILE):
               open(HISTORY_FILE, "w").close()
           with open(HISTORY_FILE, "r") as f:
@@ -44,68 +43,61 @@ jobs:
               "https://www.farsnews.ir/rss/politics"
           ]
 
-          all_news = []
+          new_items_found = []
           for url in SOURCES:
               try:
                   resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                  # استخراج آیتم‌های خبر به همراه عکس
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
                   for item in items:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
                       title = re.sub(r'<[^>]+>', '', title).strip()
-                      
-                      # استخراج عکس مرتبط
                       img_match = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
                       img_url = img_match.group(1) if img_match else None
                       
-                      # فیلتر تکراری نبودن و طول تیتر
+                      # اگر خبر جدید بود، به لیست ارسالی‌ها اضافه شود
                       if title not in sent_titles and len(title) > 35:
-                          all_news.append({"title": title, "image": img_url})
+                          new_items_found.append({"title": title, "image": img_url})
+                          sent_titles.add(title) # جلوگیری از تکرار در همین دور اجرا
               except: continue
 
-          if not all_news: exit()
+          if not new_items_found:
+              print("خبر جدیدی پیدا نشد.")
+              exit()
           
-          # انتخاب جدیدترین خبر منتشر شده که قبلاً ارسال نشده
-          selected = all_news[0]
+          # حالا تمام خبرهای جدید پیدا شده را یکی یکی پردازش و ارسال می‌کنیم
+          for news in new_items_found:
+              try:
+                  groq = requests.post(
+                      "https://api.groq.com/openai/v1/chat/completions",
+                      headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                      json={
+                          "model": "llama-3.3-70b-versatile",
+                          "messages": [
+                              {
+                                  "role": "system", 
+                                  "content": "تو سردبیر یک کانال خبری هستی. فرمت: سطر اول تیتر با 📍 / سطر دوم متن محاوره رسمی و کوتاه با 💬. بدون انگلیسی و تیکه ادمین."
+                              },
+                              {"role": "user", "content": f"این خبر مهم ایران را آماده کن:\n\n{news['title']}"}
+                          ],
+                          "temperature": 0.2
+                      }, timeout=30
+                  ).json()
+                  
+                  msg = groq["choices"][0]["message"]["content"]
+                  msg = re.sub(r'[a-zA-Z]+', '', msg).strip()
+                  final_text = f"{msg}\n\n🆔 @behnews"
 
-          try:
-              groq = requests.post(
-                  "https://api.groq.com/openai/v1/chat/completions",
-                  headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                  json={
-                      "model": "llama-3.3-70b-versatile",
-                      "messages": [
-                          {
-                              "role": "system", 
-                              "content": (
-                                  "تو سردبیر یک کانال خبری تحلیلی و رند هستی. "
-                                  "فرمت: سطر اول تیتر با 📍 / سطر دوم متن محاوره و کنایه‌آمیز با 💬. "
-                                  "قوانین: فقط فارسی سره. بدون کلمه انگلیسی. بدون بخش 'تیکه ادمین'. "
-                                  "موضع: همیشه از موضع قدرت ایران و با کنایه به رقبا بنویس."
-                              )
-                          },
-                          {"role": "user", "content": f"این خبر مهم ایران را آماده کن:\n\n{selected['title']}"}
-                      ],
-                      "temperature": 0.4
-                  }, timeout=30
-              ).json()
-              msg = groq["choices"][0]["message"]["content"]
-              msg = re.sub(r'[a-zA-Z]+', '', msg).strip()
-              msg = msg.replace("تیکه ادمین:", "").replace("تیکه ادمین", "")
-          except: exit()
+                  if news['image'] and "logo" not in news['image']:
+                      r = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": news['image'], "caption": final_text})
+                  else:
+                      r = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_text})
 
-          final_text = f"{msg}\n\n🆔 @behnews"
-
-          # ارسال به بله (با عکس اگر موجود بود، در غیر این صورت فقط متن)
-          if selected['image'] and "logo" not in selected['image']:
-              r = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": final_text})
-          else:
-              r = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_text})
-
-          # اگر ارسال موفق بود، تیتر را ذخیره کن تا تکراری نشود
-          if r.status_code == 200:
-              with open(HISTORY_FILE, "a") as f:
-                  f.write(selected['title'] + "\n")
+                  if r.status_code == 200:
+                      with open(HISTORY_FILE, "a") as f:
+                          f.write(news['title'] + "\n")
+                  
+                  time.sleep(2) # وقفه کوتاه بین ارسال‌ها برای جلوگیری از بلاک شدن توسط بله
+              except: continue
           PYEOF
 
       - name: Save History
@@ -113,5 +105,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add sent_news.txt
-          git commit -m "Update sent news history" || exit 0
+          git commit -m "Update history" || exit 0
           git push
