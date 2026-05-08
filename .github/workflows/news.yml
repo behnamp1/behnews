@@ -1,21 +1,23 @@
-name: Behnews Bot Standard
+name: Behnews Bot Fast & Official
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *' # هر ۵ دقیقه چک می‌کند
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3 # برای ذخیره لیست خبرهای تکراری لازم است
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - run: pip install requests
 
-      - name: Send news
+      - name: Process News
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -27,29 +29,38 @@ jobs:
           TOKEN = os.environ["BALE_TOKEN"]
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
+          HISTORY_FILE = "sent_news.txt"
 
-          # منابع فیلتر شده روی اخبار مهم و فوری سیاسی/داخلی
+          # خواندن تاریخچه خبرهای ارسال شده
+          if not os.path.exists(HISTORY_FILE):
+              open(HISTORY_FILE, "w").close()
+          with open(HISTORY_FILE, "r") as f:
+              sent_titles = f.read().splitlines()
+
           SOURCES = [
-              "https://www.tasnimnews.com/fa/rss/feed/0/7/1", # سیاسی تسنیم
-              "https://www.irna.ir/rss/tp/1",                 # عناوین مهم ایرنا
-              "https://www.isna.ir/rss/tp/1",                 # اخبار برگزیده ایسنا
-              "https://www.farsnews.ir/rss/politics"          # سیاسی فارس
+              "https://www.tasnimnews.com/fa/rss/feed/0/7/1",
+              "https://www.irna.ir/rss/tp/1",
+              "https://www.isna.ir/rss/tp/1",
+              "https://www.farsnews.ir/rss/politics"
           ]
 
           all_news = []
           for url in SOURCES:
               try:
-                  resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                  titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
-                  clean = lambda t: re.sub(r'<[^>]+>', '', t).strip()
-                  # فقط خبرهایی که طول کلماتشان نشان‌دهنده یک خبر جدی است
-                  valid = [clean(t) for t in titles if len(clean(t)) > 35][1:5]
-                  all_news.extend(valid)
+                  resp = requests.get(url, timeout=10)
+                  items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
+                  for item in items:
+                      title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
+                      title = re.sub(r'<[^>]+>', '', title).strip()
+                      if title not in sent_titles and len(title) > 30:
+                          all_news.append(title)
               except: continue
 
           if not all_news: exit()
-          news_block = "\n".join(all_news)
-          
+
+          # انتخاب جدیدترین خبر (اولین خبر لیست)
+          new_title = all_news[0]
+
           try:
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
@@ -57,26 +68,28 @@ jobs:
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {
-                              "role": "system", 
-                              "content": (
-                                  "تو سردبیر یک کانال خبری تحلیلی و رند هستی. "
-                                  "وظیفه: از بین خبرها، فقط 'یک' خبر که دارای ارزش سیاسی، نظامی یا ملی است انتخاب کن. "
-                                  "خبرهای زرد، اجتماعی کوچک یا حوادث را حذف کن. "
-                                  "فرمت: سطر اول تیتر با 📍 / سطر دوم متن محاوره و کنایه‌آمیز با 💬. "
-                                  "قوانین: فقط فارسی سره. بدون کلمه انگلیسی. بدون بخش 'تیکه ادمین'. "
-                                  "موضع: همیشه از موضع قدرت ایران و با کنایه به رقبا بنویس."
-                              )
-                          },
-                          {"role": "user", "content": f"مهم‌ترین خبر ایران را از این لیست انتخاب و پست کن:\n\n{news_block}"}
+                          {"role": "system", "content": "تو یک ویراستار خبر هستی. خبر زیر را فقط به صورت یک جمله کوتاه، رسمی و خبری خلاصه کن. هیچ نظر، طنز یا کنایه‌ای اضافه نکن. فقط فارسی."},
+                          {"role": "user", "content": f"خلاصه کن: {new_title}"}
                       ],
-                      "temperature": 0.4
-                  }, timeout=30
+                      "temperature": 0.1
+                  }
               ).json()
-              msg = groq["choices"][0]["message"]["content"]
-              msg = re.sub(r'[a-zA-Z]+', '', msg).strip()
-              msg = msg.replace("تیکه ادمین:", "").replace("تیکه ادمین", "")
+              summary = groq["choices"][0]["message"]["content"].strip()
           except: exit()
 
-          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": f"{msg}\n\n🆔 @behnews"})
+          # ارسال به بله
+          final_text = f"📍 {new_title}\n\n🔹 {summary}\n\n🆔 @behnews"
+          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_msg})
+
+          # ذخیره در تاریخچه برای جلوگیری از تکرار
+          with open(HISTORY_FILE, "a") as f:
+              f.write(new_title + "\n")
           PYEOF
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "NewsBot"
+          git config --global user.email "bot@github.com"
+          git add sent_news.txt
+          git commit -m "Update sent news history" || exit 0
+          git push
