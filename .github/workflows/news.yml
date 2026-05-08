@@ -1,9 +1,9 @@
-name: Behnews Bot Final Fix
+name: Behnews Bot
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/30 * * * *'
 
 jobs:
   run:
@@ -15,7 +15,7 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send Post
+      - name: Send news
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -28,52 +28,53 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def clean_text(text):
-              # فقط حذف حروف انگلیسی برای جلوگیری از سوتی‌هایی مثل besar
-              text = re.sub(r'[a-zA-Z]+', '', text)
-              # حذف خطوط اضافی احتمالی که هوش مصنوعی میسازه
-              text = text.replace('تیکه ادمین:', '').replace('📍', '').replace('💬', '')
-              return text.strip()
+          # لیست منابع (همونایی که خودت داشتی)
+          SOURCES = [
+              "https://www.tasnimnews.com/fa/rss/feed",
+              "https://www.isna.ir/rss",
+              "https://www.farsnews.ir/rss",
+              "https://www.khabaronline.ir/rss"
+          ]
 
-          SOURCES = ["https://www.isna.ir/rss/tp/1", "https://www.tasnimnews.com/fa/rss/feed/0/7/1"]
-          
-          news_list = []
+          all_news = []
           for url in SOURCES:
               try:
-                  resp = requests.get(url, timeout=15)
-                  items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
-                  for item in items[:2]:
-                      title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
-                      img = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
-                      img_url = img.group(1) if img else None
-                      news_list.append({"t": title, "i": img_url})
+                  resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                  titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
+                  clean = lambda t: re.sub(r'<[^>]+>', '', t).strip()
+                  valid = [clean(t) for t in titles if len(clean(t)) > 30][1:4]
+                  all_news.extend(valid)
               except: continue
 
-          if not news_list: exit()
-          selected = news_list[0]
+          if not all_news: exit()
 
           try:
-              # درخواست فقط برای "توضیح طنز"
+              # دقیقاً همون درخواستی که قبلاً برات کار می‌کرد
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
                   headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {"role": "system", "content": "تو یک رفیق شوخ هستی. خبر زیر را فقط در یک یا دو جمله به زبان محاوره تهرانی و خیلی صمیمی و تیکه‌دار تعریف کن. اصلا انگلیسی ننویس و تیتر هم نزن."},
-                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و صمیمی تعریف کن: {selected['t']}"}
+                          {
+                              "role": "system", 
+                              "content": "تو ادمین شوخ یک کانال خبری هستی. فقط یک خبر انتخاب کن. فرمت: سطر اول تیتر با 📍، سطر دوم متن محاوره با 💬. فقط فارسی بنویس. کلمه انگلیسی و بخش 'تیکه ادمین' ممنوع."
+                          },
+                          {"role": "user", "content": f"این خبرا رو بگیر و فقط یکیشو بترکون:\n\n{all_news[:8]}"}
                       ],
-                      "temperature": 0.4
-                  }
+                      "temperature": 0.5
+                  }, timeout=30
               ).json()
-              funny_part = clean_text(groq["choices"][0]["message"]["content"])
+              msg = groq["choices"][0]["message"]["content"]
+              
+              # اصلاحیه نهایی: حذف هرچیزی که فارسی نیست (مثل کلمات لاتین)
+              msg = re.sub(r'[a-zA-Z]+', '', msg) 
+              msg = msg.replace("تیکه ادمین:", "").strip()
+
           except: exit()
 
-          # ساختار پیام رو اینجا خودم دستی میچینم که هوش مصنوعی خرابش نکنه
-          full_caption = f"📍 **{selected['t']}**\n\n💬 {funny_part}\n\n🆔 @behnews"
+          final_msg = f"{msg}\n\n🆔 @behnews"
 
-          if selected['i'] and "logo" not in selected['i']:
-              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['i'], "caption": full_caption})
-          else:
-              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": full_caption})
+          # ارسال به بله
+          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_msg})
           PYEOF
