@@ -1,4 +1,4 @@
-name: Behnews Bot
+name: Behnews Bot Standard
 
 on:
   workflow_dispatch:
@@ -28,16 +28,15 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          # لیست منابع (همونایی که خودت داشتی)
           SOURCES = [
-              "https://www.tasnimnews.com/fa/rss/feed",
-              "https://www.isna.ir/rss",
-              "https://www.farsnews.ir/rss",
-              "https://www.khabaronline.ir/rss"
+              ("تسنیم",    "https://www.tasnimnews.com/fa/rss/feed"),
+              ("ایسنا",    "https://www.isna.ir/rss"),
+              ("فارس",     "https://www.farsnews.ir/rss"),
+              ("خبرآنلاین", "https://www.khabaronline.ir/rss"),
           ]
 
           all_news = []
-          for url in SOURCES:
+          for name, url in SOURCES:
               try:
                   resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
                   titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
@@ -48,8 +47,9 @@ jobs:
 
           if not all_news: exit()
 
+          news_block = "\n".join(all_news[:10])
+          
           try:
-              # دقیقاً همون درخواستی که قبلاً برات کار می‌کرد
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
                   headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
@@ -58,23 +58,34 @@ jobs:
                       "messages": [
                           {
                               "role": "system", 
-                              "content": "تو ادمین شوخ یک کانال خبری هستی. فقط یک خبر انتخاب کن. فرمت: سطر اول تیتر با 📍، سطر دوم متن محاوره با 💬. فقط فارسی بنویس. کلمه انگلیسی و بخش 'تیکه ادمین' ممنوع."
+                              "content": (
+                                  "تو یک طنزنویس رِند و میهن‌پرست ایرانی هستی. "
+                                  "وظیفه: از بین خبرها فقط 'یک' خبر که از همه مهم‌تر است را انتخاب کن. "
+                                  "فرمت خروجی: "
+                                  "سطر اول: یک تیتر کوتاه و جذاب با ایموجی 📍. "
+                                  "سطر دوم: یک پاراگراف کوتاه (حداکثر ۲ جمله) با لحن کاملاً عامیانه، صمیمی و کنایه‌آمیز با ایموجی 💬. "
+                                  "قوانین بسیار مهم: "
+                                  "۱- فقط فارسی بنویس. حق استفاده از حتی یک کلمه انگلیسی یا لاتین را نداری. "
+                                  "۲- بخش جداگانه‌ای به نام 'تیکه ادمین' ننویس؛ طنز و کنایه را داخل همان متن اصلی (💬) بیاور. "
+                                  "۳- حواست باشد کی به کیه! اگر ایران موفقیتی داشته، به رقیب (مثلا آمریکا) تیکه بنداز. جای برنده و بازنده را قاطی نکن. "
+                                  "۴- از کلماتی مثل 'می‌باشد' یا 'است' استفاده نکن؛ بگو 'هست'، 'شده'، 'یه جوریه'."
+                              )
                           },
-                          {"role": "user", "content": f"این خبرا رو بگیر و فقط یکیشو بترکون:\n\n{all_news[:8]}"}
+                          {"role": "user", "content": f"بهترین خبر را انتخاب کن و یک پست مشتی بساز:\n\n{news_block}"}
                       ],
-                      "temperature": 0.5
+                      "temperature": 0.4
                   }, timeout=30
               ).json()
               msg = groq["choices"][0]["message"]["content"]
               
-              # اصلاحیه نهایی: حذف هرچیزی که فارسی نیست (مثل کلمات لاتین)
-              msg = re.sub(r'[a-zA-Z]+', '', msg) 
-              msg = msg.replace("تیکه ادمین:", "").strip()
+              # پاکسازی نهایی کلمات انگلیسی احتمالی
+              msg = re.sub(r'[a-zA-Z]+', '', msg).strip()
+              # حذف فیزیکی عبارت تیکه ادمین اگر باز هم اصرار داشت بنویسه
+              msg = msg.replace("تیکه ادمین:", "").replace("تیکه ادمین", "")
 
           except: exit()
 
           final_msg = f"{msg}\n\n🆔 @behnews"
 
-          # ارسال به بله
           requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_msg})
           PYEOF
