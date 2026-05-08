@@ -1,9 +1,9 @@
-name: Behnews Bot Iran Clean
+name: Behnews Bot Professional Iran
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # هر 15 دقیقه چک میکنه
+    - cron: '*/20 * * * *'
 
 jobs:
   run:
@@ -15,7 +15,7 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send Clean News
+      - name: Send Post
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -28,35 +28,38 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def clean_text(text):
-              # فقط حروف فارسی، اعداد، و علائم نگارشی استاندارد اجازه عبور دارند
-              allowed_chars = r'[^آ-ی‌أإؤئء0-9 \.\!\?\:\(\)\-\n]'
-              text = re.sub(allowed_chars, '', text)
-              # حذف کلمات انگلیسی احتمالی
-              text = re.sub(r'[a-zA-Z]+', '', text)
+          def final_clean(text):
+              # حذف حروف انگلیسی و کاراکترهای عجیب چینی/لاتین
+              text = re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text)
+              # پاکسازی کاراکترهای خاص غیرضروری
+              text = re.sub(r'[^\u0600-\u06FF0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
               return text.strip()
 
-          SOURCES = [
-              "https://www.tasnimnews.com/fa/rss/feed/0/7/1",
-              "https://www.isna.ir/rss/tp/1",
-              "https://www.irna.ir/rss/tp/1"
-          ]
-
-          all_news = []
+          SOURCES = ["https://www.isna.ir/rss", "https://www.tasnimnews.com/fa/rss/feed", "https://www.irna.ir/rss"]
+          
+          news_list = []
           for url in SOURCES:
               try:
                   resp = requests.get(url, timeout=10)
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
-                  for item in items:
+                  for item in items[:3]:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
-                      img_match = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
-                      img_url = img_match.group(1) if img_match else None
-                      if len(title) > 30:
-                          all_news.append({"title": title, "image": img_url})
+                      img = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
+                      img_url = img.group(1) if img else None
+                      news_list.append({"t": title, "i": img_url})
               except: continue
 
-          if not all_news: exit()
-          selected = all_news[0]
+          if not news_list: exit()
+          selected = news_list[0]
+
+          system_prompt = (
+              "تو ادمین یک کانال خبری رند و صمیمی هستی. "
+              "وظیفه: خبر رو به زبان محاوره تهرانی و با لحن کنایه‌آمیز بنویس. "
+              "فرمت خروجی دقیقا این باشد:\n"
+              "📍 [یک تیتر خلاقانه و کوتاه]\n\n"
+              "💬 [توضیح خبر به زبان صمیمی و طنز در حداکثر دو جمله]\n\n"
+              "قوانین: فقط فارسی. کلمه انگلیسی اصلا استفاده نکن. تیکه ادمین جداگانه ننویس."
+          )
           
           try:
               groq = requests.post(
@@ -65,30 +68,20 @@ jobs:
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {
-                              "role": "system", 
-                              "content": (
-                                  "تو یک روزنامه‌نگار طناز و بسیار حرفه‌ای هستی. "
-                                  "وظیفه داری فقط یک خبر مهم درباره ایران را به شکلی کوتاه، صمیمی و کنایه‌آمیز بنویسی. "
-                                  "قوانین: ۱- متن باید یکپارچه باشد (تیتر و تیکه ادمین جداگانه نداریم). "
-                                  "۲- لحن کاملاً محاوره‌ای تهرانی و بسیار رندانه. "
-                                  "۳- فقط فارسی بنویس. از هیچ کاراکتر یا زبان دیگری استفاده نکن. "
-                                  "۴- متن نباید بیشتر از ۳ جمله باشد."
-                              )
-                          },
-                          {"role": "user", "content": f"این خبر رو خیلی مشتی و کوتاه تعریف کن: {selected['title']}"}
+                          {"role": "system", "content": system_prompt},
+                          {"role": "user", "content": f"این خبر ایران رو با فرمت بالا طنز کن: {selected['t']}"}
                       ],
-                      "temperature": 0.3 # کمترین خلاقیت برای بیشترین دقت در نگارش
-                  }, timeout=30
+                      "temperature": 0.4
+                  }
               ).json()
               msg = groq["choices"][0]["message"]["content"]
-              msg = clean_text(msg) # پاکسازی نهایی کاراکترهای عجیب
+              msg = final_clean(msg)
           except: exit()
 
-          caption = f"📍 {msg}\n\n🆔 @behnews"
+          full_caption = f"{msg}\n\n🆔 @behnews"
 
-          if selected['image'] and "logo" not in selected['image']:
-              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption})
+          if selected['i'] and "logo" not in selected['i']:
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['i'], "caption": full_caption})
           else:
-              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": caption})
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": full_caption})
           PYEOF
