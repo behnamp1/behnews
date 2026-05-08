@@ -29,9 +29,9 @@ jobs:
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
           SOURCES = [
-              ("تسنیم",    "https://www.tasnimnews.com/fa/rss/feed"),
-              ("ایسنا",    "https://www.isna.ir/rss"),
-              ("فارس",     "https://www.farsnews.ir/rss"),
+              ("تسنیم", "https://www.tasnimnews.com/fa/rss/feed"),
+              ("ایسنا", "https://www.isna.ir/rss"),
+              ("فارس", "https://www.farsnews.ir/rss"),
               ("خبرآنلاین", "https://www.khabaronline.ir/rss"),
           ]
 
@@ -46,7 +46,6 @@ jobs:
               except: continue
 
           if not all_news: exit()
-
           news_block = "\n- ".join(all_news[:12])
           
           try:
@@ -59,28 +58,22 @@ jobs:
                           {
                               "role": "system", 
                               "content": (
-                                  "تو یه طنزنویسِ رِند و خفنِ توییتر فارسی هستی. "
-                                  "وظیفه‌ات اینه: از بین خبرهایی که بهت داده میشه، فقط 'یک دونه' که از همه سوژه تره رو انتخاب کنی. "
-                                  "قوانین خیلی مهم: "
-                                  "۱. لحنت باید کاملاً صمیمی، لاتی و محاوره باشه (بگو 'هست'، 'شد'، 'چی میگه؟'). "
-                                  "۲. تیتر باید خیلی کوتاه، بمب و با ایموجی باشه. "
-                                  "۳. متن پست حداکثر ۲ جمله باشه. "
-                                  "۴. اصلاً و ابداً از کلمات انگلیسی، لاتین یا فینگلیش استفاده نکن. "
-                                  "۵. حواست باشه کی به کیه! اگه ایران کاری کرده، به رقیب تیکه بنداز، نه به خودمون. "
-                                  "۶. شوخی لوس نکن، جوری بنویس که انگار داری واسه رفیقت تیکه میندازی."
+                                  "تو ادمین یک کانال خبری تند و تیز هستی. "
+                                  "وظیفه: جذاب‌ترین خبر را انتخاب کن. "
+                                  "فرمت ارسال دقیقا مثل این باشد:\n"
+                                  "📍 [تیتر کوتاه خبر]\n\n"
+                                  "💬 [اصل خبر یا نقل‌قول مهم به زبان محاوره]\n\n"
+                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و بسیار رندانه به زبان لاتی/محاوره]\n\n"
+                                  "قوانین: فقط فارسی، بدون کلمه انگلیسی، لحن کاملا صمیمی و تیکه‌دار."
                               )
                           },
-                          {"role": "user", "content": f"این خبرا رو ببین، یکیشو که از همه ضایع‌تر یا مهم‌تره انتخاب کن و یه پست مشتی بساز:\n\n{news_block}"}
+                          {"role": "user", "content": f"از این خبرا یکی رو با فرمت گفته شده بساز:\n\n{news_block}"}
                       ],
-                      "temperature": 0.7 # برای اینکه متن‌ها تکراری نشن
+                      "temperature": 0.8
                   }, timeout=30
               ).json()
               msg = groq["choices"][0]["message"]["content"]
           except: exit()
 
-          # ارسال نهایی
-          requests.post(
-              f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", 
-              json={"chat_id": int(CHAT), "text": f"{msg}\n\n🆔 @behnews"}
-          )
+          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": f"{msg}\n\n🆔 @behnews"})
           PYEOF
