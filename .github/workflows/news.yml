@@ -1,4 +1,4 @@
-name: Behnews Bot Professional Iran
+name: Behnews Bot Ultra Stable
 
 on:
   workflow_dispatch:
@@ -28,12 +28,13 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def final_clean(text):
-              # حذف حروف انگلیسی و کاراکترهای عجیب چینی/لاتین
-              text = re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text)
-              # پاکسازی کاراکترهای خاص غیرضروری
-              text = re.sub(r'[^\u0600-\u06FF0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
-              return text.strip()
+          def super_clean(text):
+              # حذف هر چیزی که الفبای فارسی یا عدد یا علائم نگارشی استاندارد نیست
+              # این کاراکترهای چینی و لاتین رو کاملا فیلتر میکنه
+              cleaned = re.sub(r'[^آ-ی‌أإؤئء۰-۹0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
+              # حذف تیکه ادمین اگر باز هم اصرار داشت بنویسه
+              cleaned = re.sub(r'تیکه ادمین.*', '', cleaned, flags=re.DOTALL)
+              return cleaned.strip()
 
           SOURCES = ["https://www.isna.ir/rss", "https://www.tasnimnews.com/fa/rss/feed", "https://www.irna.ir/rss"]
           
@@ -52,30 +53,21 @@ jobs:
           if not news_list: exit()
           selected = news_list[0]
 
-          system_prompt = (
-              "تو ادمین یک کانال خبری رند و صمیمی هستی. "
-              "وظیفه: خبر رو به زبان محاوره تهرانی و با لحن کنایه‌آمیز بنویس. "
-              "فرمت خروجی دقیقا این باشد:\n"
-              "📍 [یک تیتر خلاقانه و کوتاه]\n\n"
-              "💬 [توضیح خبر به زبان صمیمی و طنز در حداکثر دو جمله]\n\n"
-              "قوانین: فقط فارسی. کلمه انگلیسی اصلا استفاده نکن. تیکه ادمین جداگانه ننویس."
-          )
-          
+          # استفاده از مدل Mixtral برای پایداری بیشتر در زبان فارسی
           try:
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
                   headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
                   json={
-                      "model": "llama-3.3-70b-versatile",
+                      "model": "mixtral-8x7b-32768",
                       "messages": [
-                          {"role": "system", "content": system_prompt},
-                          {"role": "user", "content": f"این خبر ایران رو با فرمت بالا طنز کن: {selected['t']}"}
+                          {"role": "system", "content": "تو یک کاربرِ رِند و شوخ در توییتر فارسی هستی. خبر را خیلی کوتاه و با زبان محاوره تهرانی بازنویسی کن. فقط فارسی بنویس. فرمت: 📍 [تیتر] و در سطر بعد 💬 [متن محاوره]. تیکه ادمین ننویس."},
+                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و صمیمی تعریف کن: {selected['t']}"}
                       ],
-                      "temperature": 0.4
+                      "temperature": 0.3
                   }
               ).json()
-              msg = groq["choices"][0]["message"]["content"]
-              msg = final_clean(msg)
+              msg = super_clean(groq["choices"][0]["message"]["content"])
           except: exit()
 
           full_caption = f"{msg}\n\n🆔 @behnews"
