@@ -15,7 +15,7 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send news
+      - name: Send news with Photo
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -39,14 +39,23 @@ jobs:
           for name, url in SOURCES:
               try:
                   resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                  titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
-                  clean = lambda t: re.sub(r'<[^>]+>', '', t).strip()
-                  valid = [clean(t) for t in titles if len(clean(t)) > 30][1:4]
-                  all_news.extend(valid)
+                  # استخراج آیتم‌های خبر
+                  items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
+                  for item in items[:5]:
+                      title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
+                      # تلاش برای پیدا کردن لینک عکس در تگ‌های مختلف
+                      img_match = re.search(r'<enclosure.*?url="(.*?)"', item) or re.search(r'<media:content.*?url="(.*?)"', item) or re.search(r'src="(.*?)"', item)
+                      img_url = img_match.group(1) if img_match else None
+                      
+                      if len(title) > 30:
+                          all_news.append({"title": title, "image": img_url})
               except: continue
 
           if not all_news: exit()
-          news_block = "\n- ".join(all_news[:12])
+
+          # انتخاب یک خبر تصادفی از لیست برای تنوع
+          import random
+          selected = random.choice(all_news[:10])
           
           try:
               groq = requests.post(
@@ -58,22 +67,33 @@ jobs:
                           {
                               "role": "system", 
                               "content": (
-                                  "تو ادمین یک کانال خبری تند و تیز هستی. "
-                                  "وظیفه: جذاب‌ترین خبر را انتخاب کن. "
-                                  "فرمت ارسال دقیقا مثل این باشد:\n"
+                                  "تو ادمین یک کانال خبری هستی. "
+                                  "فرمت خروجی دقیقا این باشد:\n"
                                   "📍 [تیتر کوتاه خبر]\n\n"
-                                  "💬 [اصل خبر یا نقل‌قول مهم به زبان محاوره]\n\n"
-                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و بسیار رندانه به زبان لاتی/محاوره]\n\n"
-                                  "قوانین: فقط فارسی، بدون کلمه انگلیسی، لحن کاملا صمیمی و تیکه‌دار."
+                                  "💬 [اصل خبر به زبان محاوره]\n\n"
+                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و رندانه]\n\n"
+                                  "قوانین: فقط فارسی، صمیمی، بدون کلمه انگلیسی."
                               )
                           },
-                          {"role": "user", "content": f"از این خبرا یکی رو با فرمت گفته شده بساز:\n\n{news_block}"}
-                      ],
-                      "temperature": 0.8
+                          {"role": "user", "content": f"این خبر را با فرمت گفته شده بساز: {selected['title']}"}
+                      ]
                   }, timeout=30
               ).json()
               msg = groq["choices"][0]["message"]["content"]
           except: exit()
 
-          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": f"{msg}\n\n🆔 @behnews"})
+          caption = f"{msg}\n\n🆔 @behnews"
+
+          # اگر عکس داشت، با عکس بفرست، وگرنه فقط متن
+          if selected['image']:
+              r = requests.post(
+                  f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto",
+                  json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption}
+              )
+          else:
+              r = requests.post(
+                  f"https://tapi.bale.ai/bot{TOKEN}/sendMessage",
+                  json={"chat_id": int(CHAT), "text": caption}
+              )
+          print(r.json())
           PYEOF
