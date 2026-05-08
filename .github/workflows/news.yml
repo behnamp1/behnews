@@ -1,9 +1,9 @@
-name: Behnews Bot Standard
+name: Behnews Bot Professional Iran
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/20 * * * *'
 
 jobs:
   run:
@@ -15,7 +15,7 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send news
+      - name: Send Post
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
@@ -28,26 +28,38 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          SOURCES = [
-              ("تسنیم",    "https://www.tasnimnews.com/fa/rss/feed"),
-              ("ایسنا",    "https://www.isna.ir/rss"),
-              ("فارس",     "https://www.farsnews.ir/rss"),
-              ("خبرآنلاین", "https://www.khabaronline.ir/rss"),
-          ]
+          def final_clean(text):
+              # حذف حروف انگلیسی و کاراکترهای عجیب چینی/لاتین
+              text = re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text)
+              # پاکسازی کاراکترهای خاص غیرضروری
+              text = re.sub(r'[^\u0600-\u06FF0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
+              return text.strip()
 
-          all_news = []
-          for name, url in SOURCES:
+          SOURCES = ["https://www.isna.ir/rss", "https://www.tasnimnews.com/fa/rss/feed", "https://www.irna.ir/rss"]
+          
+          news_list = []
+          for url in SOURCES:
               try:
-                  resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                  titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
-                  clean = lambda t: re.sub(r'<[^>]+>', '', t).strip()
-                  valid = [clean(t) for t in titles if len(clean(t)) > 30][1:4]
-                  all_news.extend(valid)
+                  resp = requests.get(url, timeout=10)
+                  items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
+                  for item in items[:3]:
+                      title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
+                      img = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
+                      img_url = img.group(1) if img else None
+                      news_list.append({"t": title, "i": img_url})
               except: continue
 
-          if not all_news: exit()
+          if not news_list: exit()
+          selected = news_list[0]
 
-          news_block = "\n".join(all_news[:10])
+          system_prompt = (
+              "تو ادمین یک کانال خبری رند و صمیمی هستی. "
+              "وظیفه: خبر رو به زبان محاوره تهرانی و با لحن کنایه‌آمیز بنویس. "
+              "فرمت خروجی دقیقا این باشد:\n"
+              "📍 [یک تیتر خلاقانه و کوتاه]\n\n"
+              "💬 [توضیح خبر به زبان صمیمی و طنز در حداکثر دو جمله]\n\n"
+              "قوانین: فقط فارسی. کلمه انگلیسی اصلا استفاده نکن. تیکه ادمین جداگانه ننویس."
+          )
           
           try:
               groq = requests.post(
@@ -56,36 +68,20 @@ jobs:
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {
-                              "role": "system", 
-                              "content": (
-                                  "تو یک طنزنویس رِند و میهن‌پرست ایرانی هستی. "
-                                  "وظیفه: از بین خبرها فقط 'یک' خبر که از همه مهم‌تر است را انتخاب کن. "
-                                  "فرمت خروجی: "
-                                  "سطر اول: یک تیتر کوتاه و جذاب با ایموجی 📍. "
-                                  "سطر دوم: یک پاراگراف کوتاه (حداکثر ۲ جمله) با لحن کاملاً عامیانه، صمیمی و کنایه‌آمیز با ایموجی 💬. "
-                                  "قوانین بسیار مهم: "
-                                  "۱- فقط فارسی بنویس. حق استفاده از حتی یک کلمه انگلیسی یا لاتین را نداری. "
-                                  "۲- بخش جداگانه‌ای به نام 'تیکه ادمین' ننویس؛ طنز و کنایه را داخل همان متن اصلی (💬) بیاور. "
-                                  "۳- حواست باشد کی به کیه! اگر ایران موفقیتی داشته، به رقیب (مثلا آمریکا) تیکه بنداز. جای برنده و بازنده را قاطی نکن. "
-                                  "۴- از کلماتی مثل 'می‌باشد' یا 'است' استفاده نکن؛ بگو 'هست'، 'شده'، 'یه جوریه'."
-                              )
-                          },
-                          {"role": "user", "content": f"بهترین خبر را انتخاب کن و یک پست مشتی بساز:\n\n{news_block}"}
+                          {"role": "system", "content": system_prompt},
+                          {"role": "user", "content": f"این خبر ایران رو با فرمت بالا طنز کن: {selected['t']}"}
                       ],
                       "temperature": 0.4
-                  }, timeout=30
+                  }
               ).json()
               msg = groq["choices"][0]["message"]["content"]
-              
-              # پاکسازی نهایی کلمات انگلیسی احتمالی
-              msg = re.sub(r'[a-zA-Z]+', '', msg).strip()
-              # حذف فیزیکی عبارت تیکه ادمین اگر باز هم اصرار داشت بنویسه
-              msg = msg.replace("تیکه ادمین:", "").replace("تیکه ادمین", "")
-
+              msg = final_clean(msg)
           except: exit()
 
-          final_msg = f"{msg}\n\n🆔 @behnews"
+          full_caption = f"{msg}\n\n🆔 @behnews"
 
-          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_msg})
+          if selected['i'] and "logo" not in selected['i']:
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['i'], "caption": full_caption})
+          else:
+              requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": full_caption})
           PYEOF
