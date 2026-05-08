@@ -1,4 +1,4 @@
-name: Behnews Bot Professional
+name: Behnews Bot Standard
 
 on:
   workflow_dispatch:
@@ -28,63 +28,53 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def ask_groq(prompt, system_msg):
+          # منابع رسمی
+          SOURCES = ["https://www.irna.ir/rss/", "https://www.isna.ir/rss", "https://www.tasnimnews.com/fa/rss/feed"]
+          
+          all_titles = []
+          for url in SOURCES:
               try:
-                  resp = requests.post(
-                      "https://api.groq.com/openai/v1/chat/completions",
-                      headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                      json={
-                          "model": "llama-3.3-70b-versatile",
-                          "messages": [
-                              {"role": "system", "content": system_msg},
-                              {"role": "user", "content": prompt}
-                          ],
-                          "temperature": 0.5
-                      }, timeout=30
-                  )
-                  return resp.json()["choices"][0]["message"]["content"]
-              except Exception as e:
-                  print(f"Groq Error: {e}")
-                  return None
-
-          # 1. جمع‌آوری اخبار
-          SOURCES = [("تسنیم", "https://www.tasnimnews.com/fa/rss/feed"), ("ایسنا", "https://www.isna.ir/rss"), ("فارس", "https://www.farsnews.ir/rss")]
-          all_news = []
-          for name, url in SOURCES:
-              try:
-                  resp = requests.get(url, timeout=15)
+                  resp = requests.get(url, timeout=10)
                   titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', resp.text)
-                  clean = lambda t: re.sub(r'<[^>]+>', '', t).strip()
-                  valid = [clean(t) for t in titles if len(clean(t)) > 30][1:4]
-                  all_news.extend(valid)
+                  for t in titles[1:4]:
+                      clean_t = re.sub(r'<[^>]+>', '', t).strip()
+                      if len(clean_t) > 25: all_titles.append(clean_t)
               except: continue
 
-          if not all_news:
-              print("No news to process.")
-              exit()
+          if not all_titles: exit()
 
-          # 2. مرحله اول: تولید متن طنز
-          raw_funny = ask_groq(
-              f"یکی از این خبرا رو انتخاب کن و یه پست طنز لاتی بنویس:\n{all_news[:10]}",
-              "تو طنزنویس حرفه‌ای هستی. فقط یک خبر انتخاب کن. تیتر جذاب و زیرش یک پاراگراف صمیمی و محاوره. فقط فارسی!"
-          )
+          # ارسال به Groq با دستور اکید
+          news_block = "\n- ".join(all_titles[:10])
+          
+          try:
+              groq = requests.post(
+                  "https://api.groq.com/openai/v1/chat/completions",
+                  headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                  json={
+                      "model": "llama-3.3-70b-versatile",
+                      "messages": [
+                          {
+                              "role": "system", 
+                              "content": (
+                                  "تو یک طنزنویس لاتی و رند تهرانی هستی. "
+                                  "فقط یک خبر جذاب از لیست انتخاب کن. "
+                                  "یک تیتر مشتی بزن و زیرش یک پاراگراف کوتاه (۲ جمله) طنز بنویس. "
+                                  "قوانین قرمز: ۱- کلمه انگلیسی ممنوع. ۲- کتابی حرف نزن (بگو هست، شد، می‌گه). "
+                                  "۳- حواست باشه کی به کیه! اگه ایران برده، ضایع‌اش نکن، به رقیب تیکه بنداز. "
+                                  "۴- ایموجی باحال یادت نره."
+                              )
+                          },
+                          {"role": "user", "content": f"این خبرا رو بگیر و فقط یکیشو بترکون:\n\n{news_block}"}
+                      ],
+                      "temperature": 0.7
+                  }, timeout=30
+              ).json()
+              msg = groq["choices"][0]["message"]["content"]
+          except: exit()
 
-          if not raw_funny:
-              print("Failed to generate funny text.")
-              exit()
-
-          # 3. مرحله دوم: بازبینی خودکار
-          refined = ask_groq(
-              f"این متن رو اصلاح کن (کلمات انگلیسی حذف، لحن صمیمی، پیروز و شکست‌خورده جابجا نشوند):\n{raw_funny}",
-              "سردبیر سخت‌گیر. فقط متن اصلاح شده را برگردان. بدون کلمات اضافه."
-          )
-
-          final_msg = refined if refined else raw_funny
-
-          # 4. ارسال به بله
-          r = requests.post(
+          # ارسال نهایی
+          requests.post(
               f"https://tapi.bale.ai/bot{TOKEN}/sendMessage",
-              json={"chat_id": int(CHAT), "text": f"{final_msg}\n\n🆔 @behnews"}
+              json={"chat_id": int(CHAT), "text": f"{msg}\n\n🆔 @behnews"}
           )
-          print(f"Bale Response: {r.json()}")
           PYEOF
