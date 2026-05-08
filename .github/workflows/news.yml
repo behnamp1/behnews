@@ -1,9 +1,9 @@
-name: Behnews Bot Fast Iran Final
+name: Behnews Bot Iran Clean
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/15 * * * *' # هر 15 دقیقه چک میکنه
 
 jobs:
   run:
@@ -15,28 +15,31 @@ jobs:
 
       - run: pip install requests
 
-      - name: Send Fast News
+      - name: Send Clean News
         env:
           BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PYEOF'
-          import requests, os, re, random
+          import requests, os, re
 
           TOKEN = os.environ["BALE_TOKEN"]
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def clean_latin(text):
-              # حذف هر نوع کاراکتر انگلیسی یا لاتین باقی‌مانده
-              return re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text).strip()
+          def clean_text(text):
+              # فقط حروف فارسی، اعداد، و علائم نگارشی استاندارد اجازه عبور دارند
+              allowed_chars = r'[^آ-ی‌أإؤئء0-9 \.\!\?\:\(\)\-\n]'
+              text = re.sub(allowed_chars, '', text)
+              # حذف کلمات انگلیسی احتمالی
+              text = re.sub(r'[a-zA-Z]+', '', text)
+              return text.strip()
 
           SOURCES = [
               "https://www.tasnimnews.com/fa/rss/feed/0/7/1",
               "https://www.isna.ir/rss/tp/1",
-              "https://www.irna.ir/rss/tp/1",
-              "https://www.farsnews.ir/rss/politics"
+              "https://www.irna.ir/rss/tp/1"
           ]
 
           all_news = []
@@ -65,24 +68,26 @@ jobs:
                           {
                               "role": "system", 
                               "content": (
-                                  "تو ادمین یک کانال خبری هستی. فقط و فقط به زبان فارسی سره و محاوره بنویس. "
-                                  "حتی یک کلمه انگلیسی یا لاتین (مثل pro-ble-my) نباید در متن باشد. "
-                                  "فرمت: 📍 تیتر جذاب / 💬 خبر محاوره / تیکه ادمین: لاتی و رند. "
-                                  "فقط درباره اخبار ایران بنویس و به دشمنان ایران تیکه بینداز."
+                                  "تو یک روزنامه‌نگار طناز و بسیار حرفه‌ای هستی. "
+                                  "وظیفه داری فقط یک خبر مهم درباره ایران را به شکلی کوتاه، صمیمی و کنایه‌آمیز بنویسی. "
+                                  "قوانین: ۱- متن باید یکپارچه باشد (تیتر و تیکه ادمین جداگانه نداریم). "
+                                  "۲- لحن کاملاً محاوره‌ای تهرانی و بسیار رندانه. "
+                                  "۳- فقط فارسی بنویس. از هیچ کاراکتر یا زبان دیگری استفاده نکن. "
+                                  "۴- متن نباید بیشتر از ۳ جمله باشد."
                               )
                           },
-                          {"role": "user", "content": f"این خبر رو با زبان لاتی و صمیمی طنز کن (بدون حتی یک کلمه لاتین): {selected['title']}"}
+                          {"role": "user", "content": f"این خبر رو خیلی مشتی و کوتاه تعریف کن: {selected['title']}"}
                       ],
-                      "temperature": 0.4 # کم کردن دما برای دقت بیشتر در رعایت قوانین
+                      "temperature": 0.3 # کمترین خلاقیت برای بیشترین دقت در نگارش
                   }, timeout=30
               ).json()
               msg = groq["choices"][0]["message"]["content"]
-              msg = clean_latin(msg) # لایه امنیتی نهایی
+              msg = clean_text(msg) # پاکسازی نهایی کاراکترهای عجیب
           except: exit()
 
-          caption = f"{msg}\n\n🆔 @behnews"
+          caption = f"📍 {msg}\n\n🆔 @behnews"
 
-          if selected['image'] and "static" not in selected['image'] and "logo" not in selected['image']:
+          if selected['image'] and "logo" not in selected['image']:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption})
           else:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": caption})
