@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }} # اضافه کردن توکن برای اجازه دسترسی
 
       - uses: actions/setup-python@v5
         with:
@@ -32,7 +34,8 @@ jobs:
           HISTORY_FILE = "sent_news.txt"
 
           if not os.path.exists(HISTORY_FILE):
-              with open(HISTORY_FILE, "w") as f: f.write("")
+              open(HISTORY_FILE, "w").close()
+          
           with open(HISTORY_FILE, "r") as f:
               sent_titles = set(f.read().splitlines())
 
@@ -58,9 +61,10 @@ jobs:
                           all_news.append({"title": title, "image": img_url})
               except: continue
 
-          if not all_news: exit(0)
+          if not all_news:
+              print("خبر جدیدی نیست.")
+              exit(0)
           
-          # انتخاب اولین خبر جدید
           selected = all_news[0]
 
           try:
@@ -72,7 +76,7 @@ jobs:
                       "messages": [
                           {
                               "role": "system", 
-                              "content": "تو سردبیر یک کانال خبری هستی. خبر زیر را به زبان محاوره رسمی و کوتاه خلاصه کن. فرمت: سطر اول تیتر با 📍 / سطر دوم متن با 💬. بدون کلمه انگلیسی و بدون عبارت 'تیکه ادمین'."
+                              "content": "تو سردبیر خبر هستی. خبر را به زبان محاوره رسمی و کوتاه خلاصه کن. فرمت: سطر اول تیتر با 📍 / سطر دوم متن با 💬. بدون کلمه انگلیسی و بدون عبارت تیکه ادمین."
                           },
                           {"role": "user", "content": f"این خبر را آماده کن: {selected['title']}"}
                       ],
@@ -85,7 +89,6 @@ jobs:
 
           final_text = f"{msg}\n\n🆔 @behnews"
 
-          # ارسال با عکس یا بدون عکس
           if selected['image'] and "logo" not in selected['image']:
               r = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": final_text})
           else:
@@ -98,8 +101,8 @@ jobs:
 
       - name: Save History
         run: |
-          git config --global user.name "NewsBot"
-          git config --global user.email "bot@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add sent_news.txt
-          git commit -m "Update history" || exit 0
+          git commit -m "Update sent news history" || exit 0
           git push
