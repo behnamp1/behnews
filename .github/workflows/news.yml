@@ -28,26 +28,19 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def deep_clean(text):
-              # ۱. حذف خطوطی که شامل "تیکه ادمین" هستند
-              lines = text.split('\n')
-              lines = [l for l in lines if "تیکه ادمین" not in l]
-              text = '\n'.join(lines)
-              
-              # ۲. حذف تمام حروف انگلیسی و لاتین (مثل besar و غیره)
-              text = re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text)
-              
-              # ۳. حذف کاراکترهای عجیب و غریب غیر از فارسی و علائم اصلی
-              text = re.sub(r'[^\u0600-\u06FF0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
-              
+          def clean_text(text):
+              # فقط حذف حروف انگلیسی برای جلوگیری از سوتی‌هایی مثل besar
+              text = re.sub(r'[a-zA-Z]+', '', text)
+              # حذف خطوط اضافی احتمالی که هوش مصنوعی میسازه
+              text = text.replace('تیکه ادمین:', '').replace('📍', '').replace('💬', '')
               return text.strip()
 
-          SOURCES = ["https://www.tasnimnews.com/fa/rss/feed/0/7/1", "https://www.isna.ir/rss/tp/1"]
+          SOURCES = ["https://www.isna.ir/rss/tp/1", "https://www.tasnimnews.com/fa/rss/feed/0/7/1"]
           
           news_list = []
           for url in SOURCES:
               try:
-                  resp = requests.get(url, timeout=10)
+                  resp = requests.get(url, timeout=15)
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
                   for item in items[:2]:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
@@ -60,22 +53,24 @@ jobs:
           selected = news_list[0]
 
           try:
+              # درخواست فقط برای "توضیح طنز"
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
                   headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {"role": "system", "content": "تو یک خبرنگار صمیمی هستی. فقط به زبان فارسی محاوره بنویس. تیتر بزن و متن را کوتاه تعریف کن. به هیچ وجه کلمه انگلیسی یا بخش 'تیکه ادمین' اضافه نکن."},
-                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و بدون کلمه اضافی تعریف کن: {selected['t']}"}
+                          {"role": "system", "content": "تو یک رفیق شوخ هستی. خبر زیر را فقط در یک یا دو جمله به زبان محاوره تهرانی و خیلی صمیمی و تیکه‌دار تعریف کن. اصلا انگلیسی ننویس و تیتر هم نزن."},
+                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و صمیمی تعریف کن: {selected['t']}"}
                       ],
-                      "temperature": 0.2
+                      "temperature": 0.4
                   }
               ).json()
-              msg = deep_clean(groq["choices"][0]["message"]["content"])
+              funny_part = clean_text(groq["choices"][0]["message"]["content"])
           except: exit()
 
-          full_caption = f"📍 {selected['t']}\n\n💬 {msg}\n\n🆔 @behnews"
+          # ساختار پیام رو اینجا خودم دستی میچینم که هوش مصنوعی خرابش نکنه
+          full_caption = f"📍 **{selected['t']}**\n\n💬 {funny_part}\n\n🆔 @behnews"
 
           if selected['i'] and "logo" not in selected['i']:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['i'], "caption": full_caption})
