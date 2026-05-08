@@ -1,4 +1,4 @@
-name: Behnews Bot Ultra Stable
+name: Behnews Bot Final Fix
 
 on:
   workflow_dispatch:
@@ -28,22 +28,28 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          def super_clean(text):
-              # حذف هر چیزی که الفبای فارسی یا عدد یا علائم نگارشی استاندارد نیست
-              # این کاراکترهای چینی و لاتین رو کاملا فیلتر میکنه
-              cleaned = re.sub(r'[^آ-ی‌أإؤئء۰-۹0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
-              # حذف تیکه ادمین اگر باز هم اصرار داشت بنویسه
-              cleaned = re.sub(r'تیکه ادمین.*', '', cleaned, flags=re.DOTALL)
-              return cleaned.strip()
+          def deep_clean(text):
+              # ۱. حذف خطوطی که شامل "تیکه ادمین" هستند
+              lines = text.split('\n')
+              lines = [l for l in lines if "تیکه ادمین" not in l]
+              text = '\n'.join(lines)
+              
+              # ۲. حذف تمام حروف انگلیسی و لاتین (مثل besar و غیره)
+              text = re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text)
+              
+              # ۳. حذف کاراکترهای عجیب و غریب غیر از فارسی و علائم اصلی
+              text = re.sub(r'[^\u0600-\u06FF0-9\s📍💬🆔@\.\!\?\:\(\)\-\_]', '', text)
+              
+              return text.strip()
 
-          SOURCES = ["https://www.isna.ir/rss", "https://www.tasnimnews.com/fa/rss/feed", "https://www.irna.ir/rss"]
+          SOURCES = ["https://www.tasnimnews.com/fa/rss/feed/0/7/1", "https://www.isna.ir/rss/tp/1"]
           
           news_list = []
           for url in SOURCES:
               try:
                   resp = requests.get(url, timeout=10)
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
-                  for item in items[:3]:
+                  for item in items[:2]:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
                       img = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
                       img_url = img.group(1) if img else None
@@ -53,24 +59,23 @@ jobs:
           if not news_list: exit()
           selected = news_list[0]
 
-          # استفاده از مدل Mixtral برای پایداری بیشتر در زبان فارسی
           try:
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
                   headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
                   json={
-                      "model": "mixtral-8x7b-32768",
+                      "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {"role": "system", "content": "تو یک کاربرِ رِند و شوخ در توییتر فارسی هستی. خبر را خیلی کوتاه و با زبان محاوره تهرانی بازنویسی کن. فقط فارسی بنویس. فرمت: 📍 [تیتر] و در سطر بعد 💬 [متن محاوره]. تیکه ادمین ننویس."},
-                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و صمیمی تعریف کن: {selected['t']}"}
+                          {"role": "system", "content": "تو یک خبرنگار صمیمی هستی. فقط به زبان فارسی محاوره بنویس. تیتر بزن و متن را کوتاه تعریف کن. به هیچ وجه کلمه انگلیسی یا بخش 'تیکه ادمین' اضافه نکن."},
+                          {"role": "user", "content": f"این خبر رو خیلی کوتاه و بدون کلمه اضافی تعریف کن: {selected['t']}"}
                       ],
-                      "temperature": 0.3
+                      "temperature": 0.2
                   }
               ).json()
-              msg = super_clean(groq["choices"][0]["message"]["content"])
+              msg = deep_clean(groq["choices"][0]["message"]["content"])
           except: exit()
 
-          full_caption = f"{msg}\n\n🆔 @behnews"
+          full_caption = f"📍 {selected['t']}\n\n💬 {msg}\n\n🆔 @behnews"
 
           if selected['i'] and "logo" not in selected['i']:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['i'], "caption": full_caption})
