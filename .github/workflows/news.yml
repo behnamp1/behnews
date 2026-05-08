@@ -22,20 +22,20 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PYEOF'
-          import requests, os, re, time
+          import requests, os, re
           from datetime import datetime
 
           TOKEN = os.environ["BALE_TOKEN"]
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
+          # منابع رسمی با اولویت اخبار ایران
           SOURCES = [
               ("ایرنا",    "https://www.irna.ir/rss/"),
               ("ایسنا",    "https://www.isna.ir/rss"),
-              ("مهر",      "https://www.mehrnews.com/rss"),
-              ("فارس",     "https://www.farsnews.ir/rss"),
               ("تسنیم",    "https://www.tasnimnews.com/fa/rss/feed"),
-              ("باشگاه",   "https://www.bnn.ir/rss"),
+              ("فارس",     "https://www.farsnews.ir/rss"),
+              ("مهر",      "https://www.mehrnews.com/rss"),
           ]
 
           all_news = []
@@ -44,91 +44,58 @@ jobs:
               try:
                   resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
                   rss = resp.text
-
-                  # استخراج عنوان و توضیح
                   titles = re.findall(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', rss)
-                  descs  = re.findall(r'<description>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</description>', rss)
-
-                  # پاک کردن تگ‌های HTML
+                  
                   def clean(t):
-                      t = re.sub(r'<[^>]+>', '', t).strip()
-                      return t
+                      return re.sub(r'<[^>]+>', '', t).strip()
 
-                  titles = [clean(t) for t in titles if len(clean(t)) > 15][1:3]
-                  descs  = [clean(d) for d in descs  if len(clean(d)) > 15][1:3]
-
-                  for i, title in enumerate(titles):
-                      desc = descs[i] if i < len(descs) else ""
-                      all_news.append({
-                          "source": name,
-                          "title": title,
-                          "desc": desc[:150] if desc else ""
-                      })
-
-              except Exception as e:
-                  print(f"Error {name}: {e}")
+                  # انتخاب خبرهای واقعی (فیلتر کردن عناوین تکراری سایت)
+                  valid_titles = [clean(t) for t in titles if len(clean(t)) > 25][1:4]
+                  for title in valid_titles:
+                      all_news.append(f"[{name}] {title}")
+              except:
                   continue
 
           if not all_news:
-              print("No news")
               exit()
 
-          # ساخت متن خبرها برای Groq
-          news_block = ""
-          for n in all_news[:6]:
-              news_block += f"[{n['source']}] {n['title']}"
-              if n['desc']:
-                  news_block += f" - {n['desc']}"
-              news_block += "\n"
-
-          # ارسال به Groq برای نوشتن پست طنز
+          # ارسال به Groq با دستورالعمل طنز خلاقانه و کوتاه
+          news_block = "\n".join(all_news[:10])
+          
           try:
               groq = requests.post(
                   "https://api.groq.com/openai/v1/chat/completions",
-                  headers={
-                      "Authorization": f"Bearer {GROQ_KEY}",
-                      "Content-Type": "application/json"
-                  },
+                  headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
                           {
-                              "role": "system",
+                              "role": "system", 
                               "content": (
-                                  "تو نویسنده طنز یه کانال خبری ایرانی هستی.\n"
-                                  "وظیفه‌ات اینه که اخبار جدی رو به شکل طنز و کنایه‌دار بنویسی.\n"
-                                  "قوانین نوشتن:\n"
-                                  "- هر خبر رو جداگانه در یه پاراگراف بنویس\n"
-                                  "- بین هر خبر یه خط خالی بذار\n"
-                                  "- هر پاراگراف با یه ایموجی مرتبط شروع بشه\n"
-                                  "- لحن: طنز، کنایه، بامزه ولی محترمانه\n"
-                                  "- در انتها یه جمله طنز جمع‌بندی بنویس\n"
-                                  "- فقط فارسی بنویس"
+                                  "تو یک طنزپرداز حرفه‌ای و رند ایرانی هستی. "
+                                  "باید اخبار جدی رو به صورت خیلی کوتاه، کنایه‌آمیز و خلاقانه بازنویسی کنی. "
+                                  "قوانین: 1- یک تیتر جذاب و کوتاه برای کل پست بنویس. "
+                                  "2- هر خبر رو در حداکثر یک یا دو جمله طنز کن. "
+                                  "3- بین هر خبر فاصله بذار. "
+                                  "4- لحن عصبی یا لوس نباشه، رند و بامزه باشه. "
+                                  "5- اولویت با سوژه‌های اجتماعی و اقتصادی ایران باشه."
                               )
                           },
-                          {
-                              "role": "user",
-                              "content": f"این اخبار الان ایرانه، پست کانال بنویس:\n\n{news_block}"
-                          }
+                          {"role": "user", "content": f"این اخبار رو بردار و یه پست طنز مشتی بساز:\n\n{news_block}"}
                       ],
-                      "max_tokens": 800
-                  },
-                  timeout=30
+                      "max_tokens": 1000
+                  }, timeout=30
               ).json()
-
               msg = groq["choices"][0]["message"]["content"]
+          except:
+              msg = "هوش مصنوعی‌مون رفته چای بخوره، برمی‌گرده!"
 
-          except Exception as e:
-              msg = f"⚠️ خطا: {e}"
+          # ظاهر نهایی پست
+          final_msg = f"🗞 **یه خبرایی هست...**\n\n{msg}\n\n🆔 @behnews"
 
           # ارسال به بله
-          now = datetime.now().strftime("%H:%M - %Y/%m/%d")
-          final_msg = f"📰 اخبار ایران | {now}\n\n{msg}\n\n🔔 @behnews"
-
-          r = requests.post(
+          requests.post(
               f"https://tapi.bale.ai/bot{TOKEN}/sendMessage",
-              json={"chat_id": int(CHAT), "text": final_msg},
-              timeout=15
+              json={"chat_id": int(CHAT), "text": final_msg}
           )
-          print(r.json())
           PYEOF
