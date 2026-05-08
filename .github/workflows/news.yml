@@ -1,0 +1,76 @@
+name: Behnews Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6,12,18 * * *'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests
+
+      - name: Send news
+        env:
+          BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import requests, os, re
+
+          TOKEN = os.environ["BALE_TOKEN"]
+          CHAT = os.environ["CHANNEL_ID"]
+          GROQ_KEY = os.environ["GROQ_API_KEY"]
+
+          try:
+              rss = requests.get(
+                  "https://www.irna.ir/rss/",
+                  headers={"User-Agent": "Mozilla/5.0"},
+                  timeout=15
+              ).text
+              titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', rss)
+              titles = [t for t in titles if len(t) > 10][:5]
+              news_text = "\n".join(f"- {t}" for t in titles)
+          except Exception as e:
+              news_text = "اخبار مهم ایران و جهان امروز"
+
+          try:
+              groq = requests.post(
+                  "https://api.groq.com/openai/v1/chat/completions",
+                  headers={
+                      "Authorization": f"Bearer {GROQ_KEY}",
+                      "Content-Type": "application/json"
+                  },
+                  json={
+                      "model": "llama-3.3-70b-versatile",
+                      "messages": [
+                          {
+                              "role": "system",
+                              "content": "تو یه نویسنده طنز ایرانی هستی. اخبار رو با لحن بامزه و کنایه‌دار به فارسی مینویسی. از ایموجی استفاده کن. فقط ۳ تا ۴ جمله بنویس."
+                          },
+                          {
+                              "role": "user",
+                              "content": f"این اخبار امروز ایرانه:\n{news_text}\n\nیه پست طنز برای کانال خبری بنویس."
+                          }
+                      ],
+                      "max_tokens": 500
+                  },
+                  timeout=30
+              ).json()
+              msg = groq["choices"][0]["message"]["content"]
+          except Exception as e:
+              msg = f"⚠️ خطا در دریافت خبر: {e}"
+
+          r = requests.post(
+              f"https://tapi.bale.ai/bot{TOKEN}/sendMessage",
+              json={"chat_id": int(CHAT), "text": msg},
+              timeout=15
+          )
+          print(r.json())
+          PYEOF
