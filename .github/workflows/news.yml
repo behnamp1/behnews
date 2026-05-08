@@ -1,9 +1,9 @@
-name: Behnews Bot Fast Iran
+name: Behnews Bot Fast Iran Final
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *' # هر 10 دقیقه چک میکنه که خبر داغ از دست نره
+    - cron: '*/10 * * * *'
 
 jobs:
   run:
@@ -28,12 +28,15 @@ jobs:
           CHAT = os.environ["CHANNEL_ID"]
           GROQ_KEY = os.environ["GROQ_API_KEY"]
 
-          # منابع متمرکز روی اخبار داغ و فوری ایران
+          def clean_latin(text):
+              # حذف هر نوع کاراکتر انگلیسی یا لاتین باقی‌مانده
+              return re.sub(r'[a-zA-Záéíóúýčďěňřšťžů]+', '', text).strip()
+
           SOURCES = [
-              "https://www.tasnimnews.com/fa/rss/feed/0/7/1", # سیاسی ایران
-              "https://www.isna.ir/rss/tp/1",                 # اخبار اصلی ایران
-              "https://www.irna.ir/rss/tp/1",                 # فوری ایرنا
-              "https://www.farsnews.ir/rss/politics"          # سیاسی فارس
+              "https://www.tasnimnews.com/fa/rss/feed/0/7/1",
+              "https://www.isna.ir/rss/tp/1",
+              "https://www.irna.ir/rss/tp/1",
+              "https://www.farsnews.ir/rss/politics"
           ]
 
           all_news = []
@@ -43,18 +46,14 @@ jobs:
                   items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
                   for item in items:
                       title = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item).group(1)
-                      # فیلتر دقیق‌تر برای پیدا کردن عکس خبر نه لوگوی سایت
                       img_match = re.search(r'<(?:enclosure|media:content).*?url="(.*?)"', item)
                       img_url = img_match.group(1) if img_match else None
-                      
                       if len(title) > 30:
                           all_news.append({"title": title, "image": img_url})
               except: continue
 
           if not all_news: exit()
-
-          # انتخاب یکی از ۳ خبر جدید اول (برای اینکه همیشه داغ‌ترین باشه)
-          selected = all_news[0] if all_news else None
+          selected = all_news[0]
           
           try:
               groq = requests.post(
@@ -66,26 +65,24 @@ jobs:
                           {
                               "role": "system", 
                               "content": (
-                                  "تو ادمین یک کانال خبری فوری و رند ایرانی هستی. "
-                                  "فقط درباره اخبار ایران بنویس. "
-                                  "فرمت: "
-                                  "📍 [تیتر خیلی کوتاه و جنجالی خبر]\n\n"
-                                  "💬 [اصل خبر به زبان محاوره خیلی صمیمی]\n\n"
-                                  "تیکه ادمین: [یک جمله کوتاه، کنایه‌آمیز و رندانه به سبک لاتی تهرانی]\n\n"
-                                  "قوانین: فقط فارسی. کلمه انگلیسی ممنوع. حتما به نفع ایران و علیه رقبا تیکه بنداز."
+                                  "تو ادمین یک کانال خبری هستی. فقط و فقط به زبان فارسی سره و محاوره بنویس. "
+                                  "حتی یک کلمه انگلیسی یا لاتین (مثل pro-ble-my) نباید در متن باشد. "
+                                  "فرمت: 📍 تیتر جذاب / 💬 خبر محاوره / تیکه ادمین: لاتی و رند. "
+                                  "فقط درباره اخبار ایران بنویس و به دشمنان ایران تیکه بینداز."
                               )
                           },
-                          {"role": "user", "content": f"این خبر داغ ایران رو بترکون: {selected['title']}"}
-                      ]
+                          {"role": "user", "content": f"این خبر رو با زبان لاتی و صمیمی طنز کن (بدون حتی یک کلمه لاتین): {selected['title']}"}
+                      ],
+                      "temperature": 0.4 # کم کردن دما برای دقت بیشتر در رعایت قوانین
                   }, timeout=30
               ).json()
               msg = groq["choices"][0]["message"]["content"]
+              msg = clean_latin(msg) # لایه امنیتی نهایی
           except: exit()
 
           caption = f"{msg}\n\n🆔 @behnews"
 
-          # ارسال با متد مناسب
-          if selected['image'] and "static" not in selected['image']: # جلوگیری از ارسال لوگوهای استاتیک
+          if selected['image'] and "static" not in selected['image'] and "logo" not in selected['image']:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendPhoto", json={"chat_id": int(CHAT), "photo": selected['image'], "caption": caption})
           else:
               requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": caption})
