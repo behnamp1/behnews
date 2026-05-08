@@ -9,7 +9,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3 # برای ذخیره لیست خبرهای تکراری لازم است
+      - uses: actions/checkout@v3
 
       - uses: actions/setup-python@v5
         with:
@@ -31,11 +31,12 @@ jobs:
           GROQ_KEY = os.environ["GROQ_API_KEY"]
           HISTORY_FILE = "sent_news.txt"
 
-          # خواندن تاریخچه خبرهای ارسال شده
+          # مدیریت فایل تاریخچه برای جلوگیری از ارسال تکراری
           if not os.path.exists(HISTORY_FILE):
-              open(HISTORY_FILE, "w").close()
+              with open(HISTORY_FILE, "w") as f: f.write("")
+          
           with open(HISTORY_FILE, "r") as f:
-              sent_titles = f.read().splitlines()
+              sent_titles = set(f.read().splitlines())
 
           SOURCES = [
               "https://www.tasnimnews.com/fa/rss/feed/0/7/1",
@@ -56,9 +57,11 @@ jobs:
                           all_news.append(title)
               except: continue
 
-          if not all_news: exit()
+          if not all_news:
+              print("خبر جدیدی پیدا نشد.")
+              exit(0)
 
-          # انتخاب جدیدترین خبر (اولین خبر لیست)
+          # انتخاب جدیدترین خبر
           new_title = all_news[0]
 
           try:
@@ -68,22 +71,26 @@ jobs:
                   json={
                       "model": "llama-3.3-70b-versatile",
                       "messages": [
-                          {"role": "system", "content": "تو یک ویراستار خبر هستی. خبر زیر را فقط به صورت یک جمله کوتاه، رسمی و خبری خلاصه کن. هیچ نظر، طنز یا کنایه‌ای اضافه نکن. فقط فارسی."},
+                          {"role": "system", "content": "تو یک ویراستار خبر رسمی هستی. خبر زیر را فقط در یک جمله کوتاه، رسمی و بدون هیچ طنز یا کنایه‌ای خلاصه کن. فقط فارسی بنویس."},
                           {"role": "user", "content": f"خلاصه کن: {new_title}"}
                       ],
                       "temperature": 0.1
                   }
               ).json()
               summary = groq["choices"][0]["message"]["content"].strip()
-          except: exit()
+          except Exception as e:
+              print(f"Error in Groq: {e}")
+              summary = "مشروح خبر در خبرگزاری‌های رسمی."
 
+          # متن نهایی
+          post_content = f"📍 {new_title}\n\n🔹 {summary}\n\n🆔 @behnews"
+          
           # ارسال به بله
-          final_text = f"📍 {new_title}\n\n🔹 {summary}\n\n🆔 @behnews"
-          requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": final_msg})
-
-          # ذخیره در تاریخچه برای جلوگیری از تکرار
-          with open(HISTORY_FILE, "a") as f:
-              f.write(new_title + "\n")
+          resp = requests.post(f"https://tapi.bale.ai/bot{TOKEN}/sendMessage", json={"chat_id": int(CHAT), "text": post_content})
+          
+          if resp.status_code == 200:
+              with open(HISTORY_FILE, "a") as f:
+                  f.write(new_title + "\n")
           PYEOF
 
       - name: Commit and Push changes
@@ -91,5 +98,5 @@ jobs:
           git config --global user.name "NewsBot"
           git config --global user.email "bot@github.com"
           git add sent_news.txt
-          git commit -m "Update sent news history" || exit 0
+          git commit -m "Update history" || exit 0
           git push
